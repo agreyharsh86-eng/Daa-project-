@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Graph Algorithm Simulator</title>
+<style>
+body { margin: 0; font-family: sans-serif; }
+#container { display: flex; height: 90vh; }
+#graphCanvas { flex: 1; background-color: white; border-right:1px solid #ccc; }
+#controls { width: 300px; padding: 10px; box-sizing:border-box; overflow-y:auto; }
+#controls label, #controls select, #controls button, #controls input { display:block; margin:5px 0; width:100%; }
+#instructions { white-space: pre-wrap; background:#f8f8f8; padding:5px; font-size:12px; }
+#status { height: 2em; line-height:2em; background:#eee; padding-left:10px; border-top:1px solid #ccc; }
+</style>
+</head>
+<body>
+<div id="container">
+<canvas id="graphCanvas"></canvas>
+<div id="controls">
+<label for="algorithm">Algorithm</label>
+<select id="algorithm">
+<option value="BFS">BFS</option>
+<option value="DFS">DFS</option>
+<option value="Dijkstra">Dijkstra</option>
+</select>
+<label for="startNode">Start Node</label>
+<select id="startNode"></select>
+<label for="targetNode">Target Node (optional)</label>
+<select id="targetNode"></select>
+<button id="runBtn">Run</button>
+<button id="stepBtn">Step</button>
+<button id="pauseBtn">Pause</button>
+<button id="resetColorsBtn">Reset Colors</button>
+<button id="clearBtn">Clear Graph</button>
+<label for="speed">Animation Speed (s)</label>
+<input type="range" id="speed" min="0.05" max="1.5" step="0.05" value="0.5">
+<div id="instructions">
+Instructions:
+- Click empty space: add node
+- Click a node, then click another node: add edge
+- Set weight in prompt (default=1)
+- Select Start/Target and choose algorithm
+</div>
+</div>
+</div>
+<div id="status">Ready</div>
+
+<script>
+const canvas = document.getElementById("graphCanvas");
+const ctx = canvas.getContext("2d");
+function resizeCanvas(){ canvas.width=canvas.clientWidth; canvas.height=canvas.clientHeight; draw(); }
+window.addEventListener("resize",resizeCanvas);
+resizeCanvas();
+
+const NODE_RADIUS=18;
+const NODE_FILL="#fff";
+const NODE_OUTLINE="#333";
+const EDGE_COLOR="#666";
+const VISITED_COLOR="#ffcc66";
+const FRONTIER_COLOR="#66ccff";
+const PATH_COLOR="#66ff66";
+const START_COLOR="#88ff88";
+const TARGET_COLOR="#ff8888";
+
+let nodes={}, edges=[], nodeIdCounter=1, selectedNode=null;
+let running=false, stepOnce=false;
+let speed=parseFloat(document.getElementById("speed").value);
+
+function updateNodeMenus(){
+    const startSelect=document.getElementById("startNode");
+    const targetSelect=document.getElementById("targetNode");
+    [startSelect,targetSelect].forEach(sel=>{
+        sel.innerHTML="";
+        Object.keys(nodes).forEach(id=>{
+            const option=document.createElement("option");
+            option.value=id; option.text=id; sel.add(option);
+        });
+    });
+}
+
+function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    edges.forEach(e=>{
+        ctx.strokeStyle=e.color||EDGE_COLOR;
+        ctx.lineWidth=e.width||2;
+        ctx.beginPath();
+        ctx.moveTo(nodes[e.from].x,nodes[e.from].y);
+        ctx.lineTo(nodes[e.to].x,nodes[e.to].y);
+        ctx.stroke();
+        ctx.fillStyle="black";
+        ctx.fillText(e.weight,(nodes[e.from].x+nodes[e.to].x)/2,(nodes[e.from].y+nodes[e.to].y)/2-10);
+    });
+    Object.entries(nodes).forEach(([id,node])=>{
+        ctx.beginPath();
+        ctx.arc(node.x,node.y,NODE_RADIUS,0,2*Math.PI);
+        ctx.fillStyle=node.color||NODE_FILL; ctx.fill();
+        ctx.strokeStyle=NODE_OUTLINE; ctx.stroke();
+        ctx.fillStyle="black";
+        ctx.fillText(id,node.x,node.y);
+    });
+}
+
+canvas.addEventListener("click", e=>{
+    const rect=canvas.getBoundingClientRect();
+    const x=e.clientX-rect.left;
+    const y=e.clientY-rect.top;
+    const clickedNode=Object.entries(nodes).find(([id,node])=>{
+        return (x-node.x)**2+(y-node.y)**2<=NODE_RADIUS**2;
+    });
+    if(!clickedNode) addNode(x,y);
+    else onNodeClick(clickedNode[0]);
+});
+
+function addNode(x,y){
+    nodes[nodeIdCounter]={x,y};
+    nodeIdCounter++;
+    updateNodeMenus(); draw();
+    setStatus(`Added node ${nodeIdCounter-1}`);
+}
+
+function onNodeClick(id){
+    if(!selectedNode){
+        selectedNode=id;
+        nodes[id].color=FRONTIER_COLOR; draw();
+        setStatus(`Selected node ${id} as first endpoint`);
+    } else{
+        if(selectedNode!==id) createEdge(selectedNode,id);
+        nodes[selectedNode].color=NODE_FILL; selectedNode=null; draw();
+    }
+}
+
+function createEdge(from,to){
+    const w=parseFloat(prompt(`Enter weight for edge ${from}-${to} (default 1):`,"1"))||1;
+    edges.push({from,to,weight:w});
+    draw(); setStatus(`Edge ${from}<->${to} weight=${w}`);
+}
+
+function resetColors(){
+    Object.values(nodes).forEach(n=>n.color=NODE_FILL);
+    edges.forEach(e=>{e.color=null; e.width=null;});
+    draw(); setStatus("Colors reset");
+}
+
+function clearGraph(){ nodes={}; edges=[]; nodeIdCounter=1; selectedNode=null; updateNodeMenus(); draw(); setStatus("Graph cleared"); }
+
+function setStatus(msg){ document.getElementById("status").innerText=msg; }
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+async function runAlgorithm(){
+    if(running) return;
+    const algo=document.getElementById("algorithm").value;
+    const start=document.getElementById("startNode").value;
+    const target=document.getElementById("targetNode").value || null;
+    if(!start){ alert("Choose a start node"); return; }
+    running=true; stepOnce=false;
+    resetColors();
+    nodes[start].color=START_COLOR;
+    if(target) nodes[target].color=TARGET_COLOR;
+    if(algo=="BFS") await bfs(start,target);
+    if(algo=="DFS") await dfs(start,target);
+    if(algo=="Dijkstra") await dijkstra(start,target);
+    running=false;
+    setStatus("Algorithm finished");
+}
+
+async function bfs(start,target){
+    let visited=new Set(), parent={}, queue=[start];
+    visited.add(start); nodes[start].color=FRONTIER_COLOR; draw(); await sleep(speed*1000);
+    while(queue.length){
+        let u=queue.shift(); nodes[u].color=VISITED_COLOR; draw(); await sleep(speed*1000);
+        if(target && u==target){ await showPath(parent,start,target); return; }
+        edges.filter(e=>e.from==u||e.to==u).forEach(e=>{
+            let v=(e.from==u?e.to:e.from);
+            if(!visited.has(v)){ visited.add(v); parent[v]=u; queue.push(v); e.color=FRONTIER_COLOR; draw(); }
+        });
+        await sleep(speed*1000);
+    }
+    if(target) setStatus("Target not reachable");
+}
+
+async function dfs(start,target){
+    let visited=new Set(), parent={}, stack=[start];
+    nodes[start].color=FRONTIER_COLOR; draw(); await sleep(speed*1000);
+    while(stack.length){
+        let u=stack.pop(); if(visited.has(u)) continue;
+        visited.add(u); nodes[u].color=VISITED_COLOR; draw(); await sleep(speed*1000);
+        if(target && u==target){ await showPath(parent,start,target); return; }
+        edges.filter(e=>e.from==u||e.to==u).forEach(e=>{
+            let v=(e.from==u?e.to:e.from);
+            if(!visited.has(v)){ parent[v]=u; stack.push(v); }
+        });
+        await sleep(speed*1000);
+    }
+    if(target) setStatus("Target not reachable");
+}
+
+async function dijkstra(start,target){
+    let dist={}, parent={}, visited=new Set();
+    Object.keys(nodes).forEach(n=>dist[n]=Infinity); dist[start]=0;
+    let pq=[[0,start]]; nodes[start].color=FRONTIER_COLOR; draw(); await sleep(speed*1000);
+    while(pq.length){
+        pq.sort((a,b)=>a[0]-b[0]); let [d,u]=pq.shift();
+        if(visited.has(u)) continue; visited.add(u); nodes[u].color=VISITED_COLOR; draw(); await sleep(speed*1000);
+        if(target && u==target){ await showPath(parent,start,target); return; }
+        edges.filter(e=>e.from==u||e.to==u).forEach(e=>{
+            let v=(e.from==u?e.to:e.from);
+            let nd=d+e.weight;
+           
