@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Graph Algorithm Simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="container">
+    <canvas id="graphCanvas" width="800" height="600"></canvas>
+    <div id="controls">
+      <h3>Graph Controls</h3>
+      <label>Algorithm:</label>
+      <select id="algorithm">
+        <option value="BFS">BFS</option>
+        <option value="DFS">DFS</option>
+        <option value="Dijkstra">Dijkstra</option>
+      </select>
+
+      <label>Start Node:</label>
+      <select id="startNode"></select>
+
+      <label>Target Node (optional):</label>
+      <select id="targetNode"></select>
+
+      <div class="buttons">
+        <button id="runBtn">Run</button>
+        <button id="stepBtn">Step</button>
+        <button id="pauseBtn">Pause</button>
+      </div>
+
+      <div class="buttons">
+        <button id="resetColorsBtn">Reset Colors</button>
+        <button id="clearGraphBtn">Clear Graph</button>
+      </div>
+
+      <label>Animation Speed (ms):</label>
+      <input type="range" id="speedSlider" min="50" max="1500" value="500">
+
+      <p id="status">Ready</p>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+#container {
+  display: flex;
+}
+
+#graphCanvas {
+  border: 1px solid #333;
+  background: #fff;
+}
+
+#controls {
+  width: 280px;
+  padding: 10px;
+  margin-left: 10px;
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+}
+
+#controls label {
+  display: block;
+  margin-top: 10px;
+}
+
+#controls select, #controls input {
+  width: 100%;
+  margin-top: 5px;
+}
+
+.buttons {
+  display: flex;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+button {
+  flex: 1;
+  padding: 5px;
+}
+const canvas = document.getElementById('graphCanvas');
+const ctx = canvas.getContext('2d');
+
+const NODE_RADIUS = 18;
+const colors = {
+  NODE_FILL: '#ffffff',
+  NODE_OUTLINE: '#333333',
+  EDGE_COLOR: '#666666',
+  VISITED_COLOR: '#ffcc66',
+  FRONTIER_COLOR: '#66ccff',
+  PATH_COLOR: '#66ff66',
+  START_COLOR: '#88ff88',
+  TARGET_COLOR: '#ff8888'
+};
+
+let nodes = {};        // nodeId -> {x, y}
+let edges = [];        // {u, v, weight}
+let nextId = 1;
+let selectedNode = null;
+
+let adj = {};          // adjacency list
+let running = false;
+let stepOnce = false;
+let speed = 500;
+
+// DOM elements
+const algorithmSelect = document.getElementById('algorithm');
+const startNodeSelect = document.getElementById('startNode');
+const targetNodeSelect = document.getElementById('targetNode');
+const runBtn = document.getElementById('runBtn');
+const stepBtn = document.getElementById('stepBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resetColorsBtn = document.getElementById('resetColorsBtn');
+const clearGraphBtn = document.getElementById('clearGraphBtn');
+const speedSlider = document.getElementById('speedSlider');
+const statusEl = document.getElementById('status');
+
+// ----------------- Canvas Interaction -----------------
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  const clickedNode = findNodeAt(x, y);
+  if (clickedNode) {
+    onNodeClick(clickedNode);
+  } else {
+    addNode(x, y);
+  }
+});
+
+function findNodeAt(x, y) {
+  for (const id in nodes) {
+    const nx = nodes[id].x;
+    const ny = nodes[id].y;
+    if ((x - nx) ** 2 + (y - ny) ** 2 <= NODE_RADIUS ** 2) return id;
+  }
+  return null;
+}
+
+function addNode(x, y) {
+  const id = nextId++;
+  nodes[id] = {x, y, color: colors.NODE_FILL};
+  adj[id] = [];
+  rebuildNodeMenus();
+  drawGraph();
+  status(`Added node ${id}`);
+}
+
+function onNodeClick(id) {
+  if (!selectedNode) {
+    selectedNode = id;
+    nodes[id].color = colors.FRONTIER_COLOR;
+    drawGraph();
+    status(`Selected node ${id}. Click another node to create edge.`);
+  } else {
+    if (id === selectedNode) {
+      nodes[id].color = colors.NODE_FILL;
+      selectedNode = null;
+      drawGraph();
+      status("Deselected node.");
+      return;
+    }
+    createEdge(selectedNode, id);
+    nodes[selectedNode].color = colors.NODE_FILL;
+    selectedNode = null;
+    drawGraph();
+  }
+}
+
+function createEdge(u, v) {
+  const weightStr = prompt(`Enter weight for edge ${u}-${v} (default 1):`);
+  let weight = parseFloat(weightStr);
+  if (isNaN(weight)) weight = 1;
+
+  edges.push({u, v, weight});
+  adj[u].push({v, weight});
+  adj[v].push({u, weight}); // undirected
+  status(`Edge ${u}-${v} weight=${weight}`);
+}
+
+// ----------------- Draw Graph -----------------
+function drawGraph() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // draw edges
+  for (const {u, v, weight} of edges) {
+    ctx.strokeStyle = colors.EDGE_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(nodes[u].x, nodes[u].y);
+    ctx.lineTo(nodes[v].x, nodes[v].y);
+    ctx.stroke();
+
+    // draw weight
+    const mx = (nodes[u].x + nodes[v].x) / 2;
+    const my = (nodes[u].y + nodes[v].y) / 2;
+    ctx.fillStyle = '#000';
+    ctx.fillText(weight, mx, my - 10);
+  }
+
+  // draw nodes
+  for (const id in nodes) {
+    const n = nodes[id];
+    ctx.fillStyle = n.color;
+    ctx.strokeStyle = colors.NODE_OUTLINE;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, NODE_RADIUS, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#000';
+    ctx.fillText(id, n.x, n.y);
+  }
+}
+
+// ----------------- Node menus -----------------
+function rebuildNodeMenus() {
+  const ids = Object.keys(nodes);
+  startNodeSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+  targetNodeSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+}
+
+// ----------------- Buttons -----------------
+runBtn.addEventListener('click', () => runAlgorithm());
+stepBtn.addEventListener('click', () => { stepOnce = true; running = true; });
+pauseBtn.addEventListener('click', () => { running = false; status("Paused"); });
+resetColorsBtn.addEventListener('click', () => resetColors());
+clearGraphBtn.addEventListener('click', () => clearGraph());
+speedSlider.addEventListener('input', e => speed = parseInt(e.target.value));
+
+function resetColors() {
+  for (const id in nodes) nodes[id].color = colors.NODE_FILL;
+  drawGraph();
+  status("Colors reset");
+}
+
+function clearGraph() {
+  nodes = {};
+  edges = [];
+  adj = {};
+  nextId = 1;
+  selectedNode = null;
+  rebuildNodeMenus();
+  drawGraph();
+  status("Graph cleared");
+}
+
+// ----------------- Algorithms -----------------
+async function runAlgorithm() {
+  if (Object.keys(nodes).length === 0) { alert("Add some nodes first."); return; }
+
+  const algo = algorithmSelect.value;
+  const start = startNodeSelect.value;
+  if (!start) { alert("Select start node."); return; }
+  const target = targetNodeSelect.value || null;
+
+  resetColors();
+  nodes[start].color = colors.START_COLOR;
+  if (target) nodes[target].color = colors.TARGET_COLOR;
+  drawGraph();
+
+  if (algo === "BFS") await bfs(start, target);
+  else if (algo === "DFS") await dfs(start, target);
+  else if (algo === "Dijkstra") await dijkstra(start, target);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// BFS
+async function bfs(start, target) {
+  const visited = new Set();
+  const parent = {};
+  const queue = [start];
+  visited.add(start);
+
+  while (queue.length) {
+    while (!running && !stepOnce) await sleep(50);
+    if (stepOnce) { stepOnce = false; running = false; }
+    const u = queue.shift();
+    nodes[u].color = colors.VISITED_COLOR;
+    drawGraph();
+    status(`Visited ${u}`);
+    await sleep(speed);
+
+    if (target && u === target) {
+      await highlightPath(parent, start, target);
+      return;
+    }
+
+    for (const {v} of adj[u].sort((a,b) => a.v-b.v)) {
+      if (!visited.has(v)) {
+        visited.add(v);
+        parent[v] = u;
+        queue.push(v);
+        nodes[v].color = colors.FRONTIER_COLOR;
+        drawGraph();
+        await sleep(speed);
+      }
+    }
+  }
+}
+
+// DFS
+async function dfs(start, target) {
+  const visited = new Set();
+  const parent = {};
+  const stack = [start];
+
+  while (stack.length) {
+    while (!running && !stepOnce) await sleep(50);
+    if (stepOnce) { stepOnce = false; running = false; }
+
+    const u = stack.pop();
+    if (visited.has(u)) continue;
+    visited.add(u);
+    nodes[u].color = colors.VISITED_COLOR;
+    drawGraph();
+    status(`Visited ${u}`);
+    await sleep(speed);
+
+    if (target && u === target) {
+      await highlightPath(parent, start, target);
+      return;
+    }
+
+    const neighbors = adj[u].map(n => n.v).sort((a,b) => b-a);
+    for (const v of neighbors) {
+      if (!visited.has(v)) {
+        parent[v] = u;
+        stack.push(v);
+        nodes[v].color = colors.FRONTIER_COLOR;
+        drawGraph();
+        await sleep(speed);
+      }
+    }
+  }
+}
+
+// Dijkstra
+async function dijkstra(start, target) {
+  const dist = {};
+  const parent = {};
+  const visited = new Set();
+  const pq = [];
+
+  for (const id in nodes) dist[id] = Infinity;
+  dist[start] = 0;
+  pq.push({id: start, dist: 0});
+
+  while (pq.length) {
+    while (!running && !stepOnce) await sleep(50);
+    if (stepOnce) { stepOnce = false; running = false; }
+
+    pq.sort((a,b) => a.dist-b.dist); // simple min-heap
+    const {id: u, dist: d} = pq.shift();
+    if (visited.has(u)) continue;
+    visited.add(u);
+    nodes[u].color = colors.VISITED_COLOR;
+    drawGraph();
+    status(`Visited ${u}`);
+    await sleep(speed);
+
+    if (target && u === target) {
+      await highlightPath(parent, start, target);
+      return;
+    }
+
+    for (const {v, weight} of adj[u]) {
+      const nd = d + weight;
+      if (nd < dist[v]) {
+        dist[v] = nd;
+        parent[v] = u;
+        pq.push({id: v, dist: nd});
+        nodes[v].color = colors.FRONTIER_COLOR;
+        drawGraph();
+        await sleep(speed);
+      }
+    }
+  }
+}
+
+// Highlight path
+async function highlightPath(parent, start, target) {
+  const path = [];
+  let cur = target;
+  while (cur) {
+    path.push(cur);
+    cur = parent[cur];
+    if (cur === start) { path.push(start); break; }
+  }
+  path.reverse();
+  for (let i = 0; i < path.length-1; i++) {
+    const u = path[i], v = path[i+1];
+    nodes[u].color = colors.PATH_COLOR;
+    nodes[v].color = colors.PATH_COLOR;
+    drawGraph();
+    await sleep(speed);
+  }
+  status(`Path: ${path.join(' -> ')}`);
+}
