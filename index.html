@@ -6,7 +6,7 @@
 <style>
 body { margin: 0; font-family: sans-serif; }
 #container { display: flex; height: 90vh; }
-#graphCanvas { flex: 1; background-color: white; border-right:1px solid #ccc; }
+#graphCanvas { flex: 1; background-color: white; border-right:1px solid #ccc; cursor:pointer; }
 #controls { width: 300px; padding: 10px; box-sizing:border-box; overflow-y:auto; }
 #controls label, #controls select, #controls button, #controls input { display:block; margin:5px 0; width:100%; }
 #instructions { white-space: pre-wrap; background:#f8f8f8; padding:5px; font-size:12px; }
@@ -204,6 +204,33 @@ async function dijkstra(start,target){
         if(visited.has(u)) continue; visited.add(u); nodes[u].color=VISITED_COLOR; draw(); await sleep(speed*1000);
         if(target && u==target){ await showPath(parent,start,target); return; }
         edges.filter(e=>e.from==u||e.to==u).forEach(e=>{
-            let v=(e.from==u?e.to:e.from);
-            let nd=d+e.weight;
-           
+            let v=(e.from==u?e.to:e.from); let nd=d+e.weight;
+            if(nd<dist[v]){ dist[v]=nd; parent[v]=u; pq.push([nd,v]); e.color=FRONTIER_COLOR; draw(); }
+        });
+        await sleep(speed*1000);
+    }
+    if(target) setStatus("Target not reachable");
+}
+
+async function showPath(parent,start,target){
+    let path=[target]; let cur=target;
+    while(cur!=start){ cur=parent[cur]; path.push(cur); }
+    path.reverse();
+    for(let i=0;i<path.length-1;i++){
+        let u=path[i],v=path[i+1];
+        let e=edges.find(edge=>(edge.from==u&&edge.to==v)||(edge.from==v&&edge.to==u));
+        if(e){ e.color=PATH_COLOR; e.width=4; }
+        nodes[u].color=PATH_COLOR; nodes[v].color=PATH_COLOR; draw(); await sleep(speed*1000);
+    }
+    setStatus("Path highlighted");
+}
+
+// Event listeners
+document.getElementById("clearBtn").addEventListener("click", clearGraph);
+document.getElementById("resetColorsBtn").addEventListener("click", resetColors);
+document.getElementById("runBtn").addEventListener("click", runAlgorithm);
+document.getElementById("speed").addEventListener("input", e=>{ speed=parseFloat(e.target.value); });
+
+</script>
+</body>
+</html>
